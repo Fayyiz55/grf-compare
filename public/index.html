@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Squig Compare — cross-reviewer FR overlay</title>
+  <title>GRF Compare — cross-reviewer FR overlay</title>
   <meta name="description" content="Overlay IEM & headphone frequency response curves from different squig.link reviewers in one graph.">
 
   <!-- theme before first paint -->
@@ -26,7 +26,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="SqCompare">
+  <meta name="apple-mobile-web-app-title" content="GRF Compare">
 
   <!-- fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -68,16 +68,17 @@
     };
   </script>
 
-  <link rel="stylesheet" href="./app.css">
+  <link rel="stylesheet" href="./app.css?v=17">
 </head>
 <body class="bg-canvas text-ink font-inter">
-  <noscript><div style="padding:24px;font-weight:700">Squig Compare needs JavaScript to draw graphs.</div></noscript>
+  <noscript><div style="padding:24px;font-weight:700">GRF Compare needs JavaScript to draw graphs.</div></noscript>
 
   <!-- HEADER -->
   <header class="hdr">
+    <button id="btn-menu" class="btn btn-menu shadow-sw-2" type="button" aria-label="Browse category">☰</button>
     <a class="brand shadow-sw-2" href="./" title="Reset">
-      <span class="brand-sq">SQ<i class="brand-dot"></i></span>
-      <span class="brand-word">COMPARE</span>
+      <span class="brand-sq">GRF<i class="brand-dot"></i></span>
+      <span class="brand-word">Compare</span>
     </a>
     <p class="brand-sub">FR OVERLAY · ACROSS REVIEWERS · SQUIG.LINK DATA</p>
     <div class="hdr-actions">
@@ -86,12 +87,35 @@
     </div>
   </header>
 
+  <!-- CATEGORY MENU (mobile hamburger, squig.link-style; no insights/merch here) -->
+  <nav id="menu" class="menu" hidden>
+    <div class="menu-panel">
+      <button class="menu-item" data-cat="IEM" type="button">IEMS</button>
+      <button class="menu-item" data-cat="HEADPHONE" type="button">HEADPHONES</button>
+      <button class="menu-item" data-cat="EARBUD" type="button">EARBUDS</button>
+    </div>
+  </nav>
+
   <!-- LOADING BAR -->
   <div id="loadbar" class="loadbar" hidden><span></span><span></span><span></span><span></span><span></span></div>
 
   <main class="layout">
-    <!-- SIDEBAR -->
+    <!-- SIDEBAR — a sticky column on desktop, a bottom drawer on mobile -->
     <aside class="col-side">
+      <div class="drawer-head">
+        <div class="drawer-grip" id="drawer-grip" role="button" aria-label="Drag to open or close the drawer"><span></span></div>
+        <nav class="drawer-tabs" id="drawer-tabs">
+          <button type="button" data-tab="models" class="on">MODELS</button>
+          <button type="button" data-tab="brands">BRANDS</button>
+          <button type="button" data-tab="reviewers">REVIEWERS</button>
+        </nav>
+        <div class="cat-seg" id="cat-seg" role="group" aria-label="Equipment category">
+          <button type="button" data-cat="IEM" class="on">IEM</button>
+          <button type="button" data-cat="HEADPHONE">HEADPHONE</button>
+          <button type="button" data-cat="EARBUD">EARBUD</button>
+        </div>
+      </div>
+
       <section class="panel shadow-sw-6" id="panel-rev">
         <h2 class="panel-h">REVIEWER DATABASES</h2>
         <p class="panel-tip">TOGGLE 2+ DATABASES, THEN PICK CURVES BELOW.</p>
@@ -113,6 +137,8 @@
         </div>
         <div id="lib-body" class="lib-body"></div>
       </section>
+
+      <div id="brand-index" class="brand-index tab-hide"></div>
     </aside>
 
     <!-- STAGE -->
@@ -121,7 +147,6 @@
         <div class="graph-top">
           <h2 class="panel-h">GRAPH</h2>
           <div class="graph-meta">
-            <span id="badge-rig" class="chip chip-gold shadow-sw-1">—</span>
             <button id="btn-clear" class="btn btn-mini shadow-sw-1" type="button">REMOVE ALL</button>
           </div>
         </div>
@@ -129,9 +154,10 @@
           <svg id="chart" role="img" aria-label="Frequency response overlay"></svg>
           <div id="tip" class="tip" hidden></div>
           <div id="empty" class="empty">
-            <p>PICK A CURVE FROM THE LIBRARY<span class="hide-sm"> ← LEFT</span>.</p>
+            <p>PICK A CURVE FROM THE LIBRARY<span class="hide-sm"> ← LEFT</span><span class="hide-lg"> — OPEN THE DRAWER BELOW</span>.</p>
             <p class="empty-sub">TRY «MOONDROP VARIATIONS» ACROSS 3 REVIEWERS.</p>
           </div>
+          <div id="bands" class="bands" aria-hidden="true"></div>
         </div>
         <div class="ctl">
           <label class="ctl-item">NORMALIZE&nbsp;@
@@ -150,11 +176,16 @@
             <input id="zm" type="range" min="10" max="40" step="1" value="25">
             <output id="zm-v">25</output>
           </label>
-          <label class="ctl-item ctl-check">
-            <input id="tg" type="checkbox">
-            <span class="chk shadow-sw-1" aria-hidden="true"></span>
-            HARMAN 2019 TARGET
-          </label>
+        </div>
+        <div class="tgt-row">
+          <span class="row-lab">REFERENCE TARGETS:</span>
+          <span id="tg-chips" class="tg-chips"></span>
+          <span class="row-lab">RIG</span>
+          <span id="rig-seg" class="rig-seg" role="group" aria-label="Filter curves by measurement rig">
+            <button type="button" data-rig="all" class="on">ALL</button>
+            <button type="button" data-rig="711">711</button>
+            <button type="button" data-rig="5128">5128</button>
+          </span>
         </div>
       </div>
 
@@ -178,6 +209,6 @@
   </main>
 
   <div id="toast" class="toast shadow-sw-4" hidden></div>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=17"></script>
 </body>
 </html>

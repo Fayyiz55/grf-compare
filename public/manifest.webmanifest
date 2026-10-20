@@ -1,6 +1,6 @@
 {
-  "name": "Squig Compare — cross-reviewer FR overlay",
-  "short_name": "SqCompare",
+  "name": "GRF Compare — cross-reviewer FR overlay",
+  "short_name": "GRF Compare",
   "description": "Overlay IEM & headphone frequency response curves from different squig.link reviewers in one graph.",
   "start_url": "./",
   "scope": "./",

@@ -1,4 +1,4 @@
-/* fr-core.js — shared pure DSP for Squig Compare.
+/* fr-core.js — shared pure DSP for GRF Compare.
    Works in the browser (ES module) and under node (fr-core.test.mjs).
    Grid mirrors squig.link: 48 points per octave from 20 Hz to 20 kHz,
    curves averaged across channels as power (20*log10(mean(10^(dB/20)))). */

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-/* Squig Compare server — zero dependencies. Port 3020.
+/* GRF Compare server — zero dependencies. Port 3020.
    - static files from public/
    - /api/sites  → squig.link site index (cached)
    - /api/fetch?u=<https url> → cached proxy for squig.link data
@@ -197,7 +197,9 @@ const server = http.createServer(async (req, res) => {
     let rel = decodeURIComponent(p);
     if (rel === '/') rel = '/index.html';
     const abs = path.normalize(path.join(PUB, rel));
-    if (!abs.startsWith(PUB)) return send(res, 403, 'forbidden', { 'Content-Type': 'text/plain' });
+    /* the separator matters: a plain startsWith(PUB) also admits sibling
+       dirs sharing the "public" prefix (e.g. ../public-old/) */
+    if (abs !== PUB && !abs.startsWith(PUB + path.sep)) return send(res, 403, 'forbidden', { 'Content-Type': 'text/plain' });
     let stat;
     try { stat = fs.statSync(abs); } catch { return send(res, 404, 'not found', { 'Content-Type': 'text/plain' }); }
     if (stat.isDirectory()) { return send(res, 404, 'not found', { 'Content-Type': 'text/plain' }); }
@@ -209,10 +211,12 @@ const server = http.createServer(async (req, res) => {
     send(res, 200, body, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': cc });
   } catch (e) {
     console.error('[err]', e.message);
-    send(res, 502, 'upstream error: ' + e.message, { 'Content-Type': 'text/plain' });
+    /* full detail stays in the console log — the client copy redacts the
+       server root so fs errors can't disclose local paths */
+    send(res, 502, 'error: ' + String(e.message || 'request failed').replaceAll(__dirname, '.'), { 'Content-Type': 'text/plain' });
   }
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Squig Compare → http://localhost:${PORT}`);
+  console.log(`GRF Compare → http://localhost:${PORT}`);
 });

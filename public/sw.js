@@ -1,11 +1,11 @@
-/* Squig Compare service worker.
+/* GRF Compare service worker.
    - navigations: network-first (updates land on the next online launch),
      offline falls back to the cached shell regardless of query string
    - app-shell assets: cache-first with background refresh (SWR), wrapped
      in waitUntil so the refresh survives SW termination
    - /api/*: network-first, cached fallback (offline demo of last data)
    - cross-origin (fonts, tailwind CDN): stale-while-revalidate */
-const V = 'sq-v5';
+const V = 'sq-v17';
 const SHELL = [
   './',
   './index.html',
