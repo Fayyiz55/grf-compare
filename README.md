@@ -6,12 +6,20 @@ No single reviewer owns every measurement rig, so each one publishes different g
 
 ## Run
 
+Only requirement: [Node.js](https://nodejs.org) 18+. No `npm install` — zero dependencies. It really is just:
+
 ```bash
+# 1. get the code
+git clone https://github.com/Fayyiz55/grf-compare.git
+cd grf-compare
+
+# 2. start the server
 node server.js
-# → http://localhost:3020  (reachable from your phone on the same LAN)
 ```
 
-Zero dependencies — Node ≥ 18 only. Installable PWA with offline support. `cache/` holds proxied data and is safe to delete.
+Then open **http://localhost:3020** in your browser — done.
+
+On the same Wi-Fi, your phone can open it too: `http://<your-pc-ip>:3020` (find the IP with `ipconfig` on Windows or `hostname -I` on Linux). The page is installable as a PWA from your browser menu and works offline. `cache/` holds proxied data and is safe to delete.
 
 ## Features
 
