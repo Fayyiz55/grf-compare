@@ -73,7 +73,22 @@ function refreshWhitelist() {
 refreshWhitelist();
 setInterval(refreshWhitelist, 60 * 60 * 1000).unref();
 
+/* prune disk-cache entries older than the longest TTL (TTL_TXT, 7 days) —
+   cache/ grows one file per distinct ?u= and would otherwise never shrink */
+function sweepCache() {
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  try {
+    for (const f of fs.readdirSync(CACHE)) {
+      const fp = path.join(CACHE, f);
+      try { if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp); } catch {}
+    }
+  } catch {}
+}
+setInterval(sweepCache, 60 * 60 * 1000).unref();
+
 /* ---------- upstream fetch (redirect-following, timeout) ---------- */
+const MAX_UPSTREAM_BYTES = 24 * 1024 * 1024;
+
 function getOnce(url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https:') ? https : http;
@@ -81,7 +96,12 @@ function getOnce(url, timeoutMs) {
       headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' },
     }, res => {
       const chunks = [];
-      res.on('data', c => chunks.push(c));
+      let total = 0;
+      res.on('data', c => {
+        total += c.length;
+        if (total > MAX_UPSTREAM_BYTES) { req.destroy(new Error('upstream response too large')); return; }
+        chunks.push(c);
+      });
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
     });
     req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
@@ -94,7 +114,12 @@ async function upstream(url, { timeout = 15000 } = {}) {
   for (let hop = 0; hop < 4; hop++) {
     const r = await getOnce(target, timeout);
     if (r.status >= 300 && r.status < 400 && r.headers.location) {
-      target = new URL(r.headers.location, target).href;
+      const loc = new URL(r.headers.location, target);
+      /* every hop must re-pass the same gates as the original request —
+         otherwise one open redirect turns the proxy into an intranet pivot */
+      if (loc.protocol !== 'https:') throw new Error(`insecure redirect to ${loc.protocol}//${loc.host}`);
+      if (!hostAllowed(loc.hostname)) throw new Error(`redirect host not allowed: ${loc.hostname}`);
+      target = loc.href;
       continue;
     }
     if (r.status < 200 || r.status >= 400) throw new Error(`upstream ${r.status} for ${target}`);
@@ -108,9 +133,9 @@ async function proxyFetch(url, ttlMs) {
   if (hit && Date.now() - hit.t < ttlMs) return { body: Buffer.from(hit.b64, 'base64'), ct: hit.ct, cached: true };
   try {
     const body = await upstream(url);
-    const ct = (ct => ct)(url.endsWith('.txt') ? 'text/plain; charset=utf-8' :
+    const ct = url.endsWith('.txt') ? 'text/plain; charset=utf-8' :
       /\.json($|\?)/.test(url) ? 'application/json; charset=utf-8' :
-      (hit && hit.ct) || 'application/octet-stream');
+      (hit && hit.ct) || 'application/octet-stream';
     cacheWrite(url, { t: Date.now(), ct, b64: body.toString('base64') });
     return { body, ct, cached: false };
   } catch (e) {
@@ -159,7 +184,9 @@ const server = http.createServer(async (req, res) => {
       if (!hostAllowed(parsed.hostname))
         return send(res, 403, 'host not allowed', { 'Content-Type': 'text/plain' });
       const ttl = /\.txt($|\?)/.test(parsed.pathname) ? TTL_TXT : TTL_BOOK;
-      const { body, ct, cached, stale } = await proxyFetch(target, ttl);
+      /* fetch/cache the PARSED url: canonical cache keys, and what was
+         validated is exactly what gets dialed */
+      const { body, ct, cached, stale } = await proxyFetch(parsed.href, ttl);
       logApi(req.method, p, 200, ` ${decodeURIComponent(parsed.pathname.split('/').pop() || '')}${cached ? ` (${stale ? 'stale' : 'cache'})` : ''}`);
       return send(res, 200, body, { 'Content-Type': ct, 'Cache-Control': 'no-cache' });
     }
@@ -175,7 +202,9 @@ const server = http.createServer(async (req, res) => {
     try { stat = fs.statSync(abs); } catch { return send(res, 404, 'not found', { 'Content-Type': 'text/plain' }); }
     if (stat.isDirectory()) { return send(res, 404, 'not found', { 'Content-Type': 'text/plain' }); }
     const ext = path.extname(abs).toLowerCase();
-    const cc = ext === '.html' ? 'no-cache' : 'public, max-age=3600';
+    /* sw.js must revalidate every load or SW updates lag behind by the http cache */
+    const noCache = ext === '.html' || (ext === '.js' && abs.endsWith('sw.js'));
+    const cc = noCache ? 'no-cache' : 'public, max-age=3600';
     const body = fs.readFileSync(abs);
     send(res, 200, body, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': cc });
   } catch (e) {

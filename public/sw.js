@@ -1,8 +1,11 @@
 /* Squig Compare service worker.
-   - app shell: cache-first with background refresh (stale-while-revalidate)
+   - navigations: network-first (updates land on the next online launch),
+     offline falls back to the cached shell regardless of query string
+   - app-shell assets: cache-first with background refresh (SWR), wrapped
+     in waitUntil so the refresh survives SW termination
    - /api/*: network-first, cached fallback (offline demo of last data)
    - cross-origin (fonts, tailwind CDN): stale-while-revalidate */
-const V = 'sq-v4';
+const V = 'sq-v5';
 const SHELL = [
   './',
   './index.html',
@@ -46,20 +49,34 @@ self.addEventListener('fetch', e => {
           caches.match(req).then(m => m || new Response(JSON.stringify({ error: 'offline' }), { headers: { 'Content-Type': 'application/json' } }))
         )
       );
-    } else {
-      /* app shell: cache-first + background refresh */
+    } else if (req.mode === 'navigate') {
+      /* network-first so shipping updates show on the very next online
+         launch; offline, shared links (?s=…) still get the cached shell */
       e.respondWith(
-        caches.match(req).then(m => {
-          const net = fetch(req).then(r => {
-            if (r.ok) {
-              const cp = r.clone();
-              caches.open(V).then(c => c.put(req, cp));
-            }
-            return r;
-          }).catch(() => m);
-          return m || net;
-        })
+        fetch(req).then(r => {
+          if (r.ok) {
+            const cp = r.clone();
+            caches.open(V).then(c => c.put('./', cp));
+          }
+          return r;
+        }).catch(() =>
+          caches.match('./', { ignoreSearch: true }).then(m => m || Response.error())
+        )
       );
+    } else {
+      /* assets: cache-first + background refresh (kept alive by waitUntil) */
+      e.respondWith((async () => {
+        const m = await caches.match(req);
+        const net = fetch(req).then(r => {
+          if (r.ok) {
+            const cp = r.clone();
+            caches.open(V).then(c => c.put(req, cp));
+          }
+          return r;
+        }).catch(() => m);
+        e.waitUntil(net.then(() => {}, () => {}));
+        return m || net;
+      })());
     }
     return;
   }
@@ -74,6 +91,7 @@ self.addEventListener('fetch', e => {
         }
         return r;
       }).catch(() => m);
+      e.waitUntil(net.then(() => {}, () => {}));
       return m || net;
     })
   );

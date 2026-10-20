@@ -35,8 +35,11 @@ t('parseTsv: strips * comments, parses freq\\tdB pairs', () => {
 });
 
 t('parseTsv: tolerates comma-separated rows', () => {
-  const c = parseTsv('* hdr\n20.1,\t-12.5\n21.0,\t-12.4\n'.replace(',', ''), );
+  const c = parseTsv('* hdr\n20.1,\t-12.5\n21.0,\t-12.4\n'.replace(',', ''), ); // mixed: row1 tab, row2 comma+tab
   const c2 = parseTsv('* hdr\n20.1,-12.5\n21.0,-12.4\n');
+  if (c.length !== 2) throw new Error(`mixed len ${c.length}`);
+  eq(c[0][1], -12.5);
+  eq(c[1][1], -12.4);
   if (c2.length !== 2) throw new Error(`len ${c2.length}`);
   eq(c2[0][1], -12.5);
 });

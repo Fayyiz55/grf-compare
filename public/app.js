@@ -2,7 +2,7 @@
    Loads public squig.link data through the local /api proxy, lets you
    toggle several reviewer databases at once, and overlays curves from
    DIFFERENT reviewers on one SVG graph. */
-import { buildGrid, parseTsv, interpToGrid, valueAt, valueOnGrid, avgPower, smoothCurve } from './fr-core.js';
+import { buildGrid, parseTsv, interpToGrid, valueOnGrid, avgPower, smoothCurve } from './fr-core.js';
 
 /* ---------------- helpers ---------------- */
 const $ = s => document.querySelector(s);
@@ -17,7 +17,8 @@ const el = (tag, attrs = {}, kids = []) => {
   for (const kid of kids) n.append(kid);
   return n;
 };
-const esc = s => String(s);
+/* escapes third-party reviewer data before it reaches any innerHTML sink */
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 let toastTimer = null;
 function toast(msg, err = false) {
@@ -44,8 +45,6 @@ const FEATURED = [
   { name: 'Precogvision', type: 'IEMs' },
   { name: 'Hangout.Audio', type: 'IEMs' },
 ];
-const TARGET_KEY = 'harman-2019';
-const TARGET_LABEL = 'Harman IE 2019';
 
 /* reviewer chip colors stay consistent across the app */
 const REV_COLORS = ['#4d4dff', '#ff4438', '#0baa53', '#fb8b1e', '#a855f7', '#06b6d4', '#ec4899', '#84cc16', '#14b8a6', '#f97316'];
@@ -79,6 +78,7 @@ async function apiText(url) {
 function baseUrlFor(site) {
   if (site.urlType === 'subdomain' && site.username) return `https://${site.username}.squig.link`;
   if (site.urlType === 'altDomain' && site.altDomain) return site.altDomain.replace(/\/$/, '');
+  if (site.urlType === 'labFolder' && site.username) return `https://squig.link/lab/${site.username}`;
   return 'https://squig.link';
 }
 
@@ -116,11 +116,17 @@ function itemsForDb(db, book) {
       if (!ph || !ph.name) continue;
       const f = ph.file || ph.name;
       if (Array.isArray(f)) {
-        // variants: squig's suffix/prefix rules
+        // variants: squig's suffix/prefix rules — suffix[i] pairs with file[i]
         let dns;
-        if (ph.suffix) dns = f.map(sfx => ph.name + (sfx ? ' ' + sfx : ''));
-        else if (ph.prefix) {
-          const reg = new RegExp('^' + ph.prefix + '\\s*', 'i');
+        if (ph.suffix) {
+          const sx = ph.suffix;
+          dns = f.map((_, i) => {
+            const s = Array.isArray(sx) ? (sx[i] || '') : String(sx);
+            return ph.name + (s ? ' ' + s : '');
+          });
+        } else if (ph.prefix) {
+          const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const reg = new RegExp('^' + escRe(String(ph.prefix)) + String.fromCharCode(92) + 's*', 'i');
           dns = f.map(n => ph.name + (n.replace(reg, '').length ? ' ' + n.replace(reg, '') : ''));
         } else dns = f;
         f.forEach((fn, i) => out.push(mkItem(db, brand.name, dns[i] || ph.name, fn)));
@@ -139,7 +145,7 @@ function itemsForDb(db, book) {
       disp,
       fullName: `${brand} ${disp}`,
       file,
-      txtBase: `${db.base}${db.folder === '/' ? '' : db.folder}data/${encodeURIComponent(file)}`,
+      txtBase: `${db.base}${db.folder}data/${encodeURIComponent(file)}`,
     };
     S.itemIndex.set(it.id, it);
     return it;
@@ -148,7 +154,7 @@ function itemsForDb(db, book) {
 
 async function ensureBook(db) {
   if (S.books.has(db.key)) return S.books.get(db.key);
-  const book = await apiJson(`/api/fetch?u=${encodeURIComponent(db.base + (db.folder === '/' ? '' : db.folder) + 'data/phone_book.json')}`);
+  const book = await apiJson(`/api/fetch?u=${encodeURIComponent(db.base + db.folder + 'data/phone_book.json')}`);
   S.books.set(db.key, Array.isArray(book) ? book : []);
   return S.books.get(db.key);
 }
@@ -567,11 +573,20 @@ async function drawTarget(svg, mk, x, y) {
   svg.append(mk('path', { d, fill: 'none', stroke: 'var(--ink-soft)', 'stroke-width': 2, 'stroke-dasharray': '6 5', opacity: 0.85 }));
 }
 
-/* pointer inspector: crosshair + per-curve readouts */
+/* pointer inspector: crosshair + per-curve readouts.
+   Listeners attach ONCE to the persistent #chart svg; render-time geometry
+   (scale fns, width, pads) rides in GEO so handlers never go stale and
+   re-renders don't pile up duplicate listeners. */
+const GEO = { svg: null, x: null, y: null, W: 0, PAD: null };
 function wirePointer(svg, x, y, W, PAD) {
+  Object.assign(GEO, { svg, x, y, W, PAD });
+  if (svg.dataset.wired) return;
+  svg.dataset.wired = '1';
   const tip = $('#tip');
   const NS = 'http://www.w3.org/2000/svg';
   const move = ev => {
+    const { svg, x, y, W, PAD } = GEO;
+    if (!svg) return;
     const r = svg.getBoundingClientRect();
     const clientX = (ev.touches ? ev.touches[0].clientX : ev.clientX);
     const cx = clientX - r.left;
@@ -623,14 +638,27 @@ function encodeState() {
     nf: S.settings.nf, sm: S.settings.sm, zm: S.settings.zm, tg: S.settings.tg,
   })))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
+/* settings arriving via share URL or localStorage are untrusted — coerce+clamp
+   so a crafted link can't flatten curves (negative smoothing) or hide them
+   (zero/negative y-range). Keeps sliders honest about what's adopted. */
+function adoptSettings(o) {
+  if (!o || typeof o !== 'object') return;
+  const nf = Number(o.nf);
+  if (nf === 200 || nf === 500 || nf === 1000) S.settings.nf = nf;
+  const sm = Math.round(Number(o.sm));
+  if (Number.isFinite(sm)) S.settings.sm = Math.min(24, Math.max(0, sm));
+  const zm = Math.round(Number(o.zm));
+  if (Number.isFinite(zm)) S.settings.zm = Math.min(40, Math.max(10, zm));
+  if ('tg' in o) S.settings.tg = !!o.tg;
+}
 function applyShare() {
   const s = new URL(location.href).searchParams.get('s');
   if (!s) return false;
   try {
     const st = JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/')))));
-    st.e?.forEach(k => S.enabled.add(k));
-    Object.assign(S.settings, { nf: st.nf ?? 1000, sm: st.sm ?? 8, zm: st.zm ?? 25, tg: !!st.tg });
-    S._shareActive = st.a || null;
+    if (Array.isArray(st.e)) st.e.forEach(k => S.enabled.add(k));
+    adoptSettings(st);
+    S._shareActive = Array.isArray(st.a) ? st.a : null;
     return true;
   } catch { return false; }
 }
@@ -652,7 +680,7 @@ function restore() {
     const en = JSON.parse(localStorage.getItem('sq-en') || 'null');
     if (Array.isArray(en) && en.length) en.forEach(k => S.enabled.add(k));
     const st = JSON.parse(localStorage.getItem('sq-settings') || 'null');
-    if (st) Object.assign(S.settings, st);
+    if (st) adoptSettings(st);
   } catch {}
 }
 
@@ -726,21 +754,25 @@ async function toggleDbQuiet(db) {
 
 async function defaultDemo() {
   if (S.active.size) return;
-  /* NOTE: display names differ per reviewer — crinacle drops brand
-     prefixes: hangout name is "Variations", super* review and precog
-     publish "Moondrop Variations". Match by display name per db. */
+  /* Demonstrate the cross-reviewer overlay with one physical earphone
+     seen through different reviewers' books. Match by FILE NAME first
+     (stable identifier), then display name — display conventions differ
+     per reviewer and shifted when suffix pairing was fixed. */
   const wish = [
-    { db: 'Super* Review', disp: 'Tanchjim Kasier' },
-    { db: 'Hawaii Bad Boy', disp: 'Variations' },
-    { db: 'Precogvision', disp: 'Moondrop Variations' },
-    { db: 'Hangout.Audio', disp: 'Variations' },
+    { db: 'Super* Review', file: 'Tanchjim Kasier', disp: 'Kasier' },
+    { db: 'Hawaii Bad Boy', file: 'Moondrop Variations', disp: 'Variations' },
+    { db: 'Precogvision', file: 'Moondrop Variations', disp: 'Variations' },
+    { db: 'Hangout.Audio', file: 'Variations', disp: 'Variations' },
   ];
   for (const w of wish) {
     if (S.active.size >= 4) break;
     const db = S.dbs.find(d => d.name === w.db && S.enabled.has(d.key));
     if (!db) continue;
-    const it = [...S.itemIndex.values()].find(i => i.db.key === db.key && i.disp === w.disp)
-      || [...S.itemIndex.values()].find(i => i.db.key === db.key && i.disp.includes(w.disp));
+    const idx = [...S.itemIndex.values()].filter(i => i.db.key === db.key);
+    const it = idx.find(i => i.file === w.file)
+      || idx.find(i => i.file.startsWith(w.file))
+      || idx.find(i => i.disp === w.disp)
+      || idx.find(i => i.disp.includes(w.disp));
     if (!it) continue;
     try {
       const grid = await measurementFor(it);

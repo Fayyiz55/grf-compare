@@ -5,7 +5,9 @@ import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
-const PORT = 3020;
+/* respect PORT so the suite can run while a real server occupies 3020 —
+   spawning on a busy port dies EADDRINUSE while up() probes the wrong process */
+const PORT = Number(process.env.PORT) || 3120;
 
 const proc = spawn('node', [join(ROOT, 'server.js')], { stdio: ['ignore', 'pipe', 'pipe'] });
 proc.stderr.on('data', d => process.stderr.write('[srv] ' + d));
@@ -24,9 +26,10 @@ try {
   const h1 = await r1.text();
   ok('GET / serves html', r1.ok && h1.includes('<script'), `status ${r1.status}`);
 
-  // 2. static traversal guard
-  const r2 = await fetch(`http://localhost:${PORT}/../server.js`);
-  ok('traversal guarded', !String(await r2.text()).includes('createServer'), '');
+  // 2. static traversal guard (encoded dots survive undici path-normalization)
+  const r2 = await fetch(`http://localhost:${PORT}/%2e%2e%2fserver.js`);
+  const r2body = String(await r2.text());
+  ok('traversal guarded (encoded-dot → 403, no leak)', r2.status === 403 && !r2body.includes('createServer'), `status ${r2.status}`);
 
   // 3. sites proxy
   const r3 = await fetch(`http://localhost:${PORT}/api/sites`);
