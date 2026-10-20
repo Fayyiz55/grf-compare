@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Squig Compare — cross-reviewer FR overlay</title>
+  <meta name="description" content="Overlay IEM & headphone frequency response curves from different squig.link reviewers in one graph.">
+
+  <!-- theme before first paint -->
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f0f0e8">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#161618">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('sq-theme');
+        if (!t) t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        if (t === 'dark') document.documentElement.classList.add('dark');
+      } catch (e) {}
+    })();
+  </script>
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/favicon-64.png" type="image/png">
+  <link rel="apple-touch-icon" href="./icons/apple-180.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SqCompare">
+
+  <!-- fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- tailwind (utilities map to tokens) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'var(--canvas)',
+            surface: 'var(--surface)',
+            ink: 'var(--ink)',
+            inks: 'var(--ink-soft)',
+            hyper: 'var(--blue)',
+            danger: 'var(--red)',
+            signal: 'var(--green)',
+            warn: 'var(--orange)',
+            gold: 'var(--gold)',
+            swshadow: 'var(--shadow)',
+          },
+          boxShadow: {
+            'sw-1': '1px 1px 0 0 var(--shadow)',
+            'sw-2': '2px 2px 0 0 var(--shadow)',
+            'sw-4': '4px 4px 0 0 var(--shadow)',
+            'sw-6': '6px 6px 0 0 var(--shadow)',
+            'sw-8': '8px 8px 0 0 var(--shadow)',
+            'sw-12': '12px 12px 0 0 var(--shadow)',
+          },
+          fontFamily: {
+            grotesk: ['"Space Grotesk"', 'ui-monospace', 'monospace'],
+            inter: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body class="bg-canvas text-ink font-inter">
+  <noscript><div style="padding:24px;font-weight:700">Squig Compare needs JavaScript to draw graphs.</div></noscript>
+
+  <!-- HEADER -->
+  <header class="hdr">
+    <a class="brand shadow-sw-2" href="./" title="Reset">
+      <span class="brand-sq">SQ<i class="brand-dot"></i></span>
+      <span class="brand-word">COMPARE</span>
+    </a>
+    <p class="brand-sub">FR OVERLAY · ACROSS REVIEWERS · SQUIG.LINK DATA</p>
+    <div class="hdr-actions">
+      <button id="btn-copy" class="btn shadow-sw-2" type="button">COPY URL</button>
+      <button id="btn-dark" class="btn shadow-sw-2" type="button" title="Toggle dark mode">DARK</button>
+    </div>
+  </header>
+
+  <!-- LOADING BAR -->
+  <div id="loadbar" class="loadbar" hidden><span></span><span></span><span></span><span></span><span></span></div>
+
+  <main class="layout">
+    <!-- SIDEBAR -->
+    <aside class="col-side">
+      <section class="panel shadow-sw-6" id="panel-rev">
+        <h2 class="panel-h">REVIEWER DATABASES</h2>
+        <p class="panel-tip">TOGGLE 2+ DATABASES, THEN PICK CURVES BELOW.</p>
+        <div id="rev-body" class="rev-body"></div>
+        <div class="rev-foot">
+          <button id="btn-feat" class="btn btn-mini shadow-sw-1" type="button">FEATURED FOUR</button>
+          <button id="btn-none" class="btn btn-mini shadow-sw-1" type="button">CLEAR</button>
+        </div>
+      </section>
+
+      <section class="panel shadow-sw-6" id="panel-lib">
+        <h2 class="panel-h">LIBRARY</h2>
+        <div class="lib-tools">
+          <input id="q" class="inp shadow-sw-2" type="search" placeholder="SEARCH MODEL / BRAND…" autocomplete="off">
+          <div class="lib-tools-row">
+            <button id="btn-matrix" class="btn btn-mini shadow-sw-1" type="button" aria-pressed="false">MATCH MATRIX</button>
+            <span id="lib-count" class="count">—</span>
+          </div>
+        </div>
+        <div id="lib-body" class="lib-body"></div>
+      </section>
+    </aside>
+
+    <!-- STAGE -->
+    <section class="col-stage">
+      <div class="panel shadow-sw-8" id="panel-graph">
+        <div class="graph-top">
+          <h2 class="panel-h">GRAPH</h2>
+          <div class="graph-meta">
+            <span id="badge-rig" class="chip chip-gold shadow-sw-1">—</span>
+            <button id="btn-clear" class="btn btn-mini shadow-sw-1" type="button">REMOVE ALL</button>
+          </div>
+        </div>
+        <div id="wrap" class="wrap">
+          <svg id="chart" role="img" aria-label="Frequency response overlay"></svg>
+          <div id="tip" class="tip" hidden></div>
+          <div id="empty" class="empty">
+            <p>PICK A CURVE FROM THE LIBRARY<span class="hide-sm"> ← LEFT</span>.</p>
+            <p class="empty-sub">TRY «MOONDROP VARIATIONS» ACROSS 3 REVIEWERS.</p>
+          </div>
+        </div>
+        <div class="ctl">
+          <label class="ctl-item">NORMALIZE&nbsp;@
+            <select id="nf" class="inp inp-sel shadow-sw-1">
+              <option value="200">200 HZ</option>
+              <option value="500">500 HZ</option>
+              <option value="1000" selected>1 KHZ</option>
+              <option value="2000">2 KHZ</option>
+            </select>
+          </label>
+          <label class="ctl-item">SMOOTH
+            <input id="sm" type="range" min="0" max="24" step="1" value="8">
+            <output id="sm-v">8</output>
+          </label>
+          <label class="ctl-item">Y RANGE ±
+            <input id="zm" type="range" min="10" max="40" step="1" value="25">
+            <output id="zm-v">25</output>
+          </label>
+          <label class="ctl-item ctl-check">
+            <input id="tg" type="checkbox">
+            <span class="chk shadow-sw-1" aria-hidden="true"></span>
+            HARMAN 2019 TARGET
+          </label>
+        </div>
+      </div>
+
+      <div class="panel shadow-sw-6" id="panel-leg">
+        <div class="graph-top">
+          <h2 class="panel-h">ACTIVE CURVES</h2>
+          <span id="leg-count" class="count">0</span>
+        </div>
+        <div id="leg-empty" class="legend-empty">NONE — TAP ROWS IN THE LIBRARY TO ADD CURVES.</div>
+        <table class="legend shadow-sw-2" id="legend" hidden>
+          <thead><tr><th></th><th>#</th><th>REVIEWER</th><th>MODEL</th><th>RIG</th><th></th></tr></thead>
+          <tbody id="leg-body"></tbody>
+        </table>
+      </div>
+
+      <footer class="foot">
+        <span>CROSS-REVIEWER COMPARISON ≠ IDENTICAL RIGS — DIFFERENT COUPLERS &amp; UNITS.</span>
+        <span class="foot-src">DATA: PUBLIC SQUIG.LINK PHONE BOOKS + MEASUREMENT TXT (CORS-OPEN)</span>
+      </footer>
+    </section>
+  </main>
+
+  <div id="toast" class="toast shadow-sw-4" hidden></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

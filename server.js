@@ -78,7 +78,7 @@ function getOnce(url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https:') ? https : http;
     const req = mod.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; squig-compare/1.0)' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' },
     }, res => {
       const chunks = [];
       res.on('data', c => chunks.push(c));
@@ -119,6 +119,11 @@ async function proxyFetch(url, ttlMs) {
   }
 }
 
+/* concise request log for /api routes */
+function logApi(method, p, status, extra = '') {
+  console.log(`[api] ${method} ${p} ${status}${extra}`);
+}
+
 /* ---------- http server ---------- */
 function send(res, status, body, headers = {}) {
   res.writeHead(status, {
@@ -139,7 +144,8 @@ const server = http.createServer(async (req, res) => {
     const p = u.pathname;
 
     if (p === '/api/sites') {
-      const { body, ct } = await proxyFetch(SITES_URL, TTL_SITES);
+      const { body, ct, cached, stale } = await proxyFetch(SITES_URL, TTL_SITES);
+      logApi(req.method, p, 200, cached ? ` (${stale ? 'stale' : 'cache'})` : '');
       return send(res, 200, body, { 'Content-Type': ct, 'Cache-Control': 'no-cache' });
     }
 
@@ -153,7 +159,8 @@ const server = http.createServer(async (req, res) => {
       if (!hostAllowed(parsed.hostname))
         return send(res, 403, 'host not allowed', { 'Content-Type': 'text/plain' });
       const ttl = /\.txt($|\?)/.test(parsed.pathname) ? TTL_TXT : TTL_BOOK;
-      const { body, ct } = await proxyFetch(target, ttl);
+      const { body, ct, cached, stale } = await proxyFetch(target, ttl);
+      logApi(req.method, p, 200, ` ${decodeURIComponent(parsed.pathname.split('/').pop() || '')}${cached ? ` (${stale ? 'stale' : 'cache'})` : ''}`);
       return send(res, 200, body, { 'Content-Type': ct, 'Cache-Control': 'no-cache' });
     }
 

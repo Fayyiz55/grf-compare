@@ -67,6 +67,20 @@ export function valueAt(src, f) {
   return src[j][1] + t * (src[j + 1][1] - src[j][1]);
 }
 
+/* dB value of a curve already interpolated onto the dense GRID at frequency f.
+   The grid is uniform in log space; binary-search the bracketing pair. */
+export function valueOnGrid(vals, grid, f) {
+  const n = grid.length;
+  if (!n || !vals.length) return NaN;
+  if (f <= grid[0]) return vals[0];
+  if (f >= grid[n - 1]) return vals[n - 1];
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (grid[mid] < f) lo = mid; else hi = mid; }
+  const l0 = Math.log(grid[lo]), l1 = Math.log(grid[hi]);
+  const t = l1 === l0 ? 0 : (Math.log(f) - l0) / (l1 - l0);
+  return vals[lo] + t * (vals[hi] - vals[lo]);
+}
+
 /* Power-average N channels (already on the same grid) into one dB array.
    Mirrors squig's avgCurves: 20*log10(mean(10^(dB/20))). */
 export function avgPower(channels) {

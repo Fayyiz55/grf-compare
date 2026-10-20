@@ -1,4 +1,4 @@
-import { buildGrid, parseTsv, interpToGrid, valueAt, avgPower, smoothCurve } from '../public/fr-core.js';
+import { buildGrid, parseTsv, interpToGrid, valueAt, valueOnGrid, avgPower, smoothCurve } from '../public/fr-core.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -9,7 +9,7 @@ function t(name, fn) {
   try { fn(); pass++; console.log(`PASS ${name}`); }
   catch (e) { fail++; console.error(`FAIL ${name}: ${e.message}`); }
 }
-function eq(a, b, eps = 1e-9) { if (!(Math.abs(a - b) <= eps)) throw new Error(`${a} != ${b}`); }
+function eq(a, b, eps = 1e-9) { if (Number.isNaN(a) && Number.isNaN(b)) return; if (!(Math.abs(a - b) <= eps)) throw new Error(`${a} != ${b}`); }
 
 const fixture = readFileSync(join(__dirname, 'fixtures-kasier-l.txt'), 'utf8');
 
@@ -83,6 +83,31 @@ t('smoothCurve: preserves DC level, reduces wiggle', () => {
   eq(out[0], 60, 1e-6);
   const peak = Math.max(...out);
   if (!(peak < 90 && peak > 62)) throw new Error(`peak ${peak}`);
+});
+
+t('valueOnGrid: exact grid point', () => {
+  const grid = buildGrid();
+  const vals = grid.map((f, i) => 50 + i * 0.01); // slope fixture
+  const i = Math.floor(grid.length / 2);
+  eq(valueOnGrid(vals, grid, grid[i]), vals[i], 1e-9);
+});
+
+t('valueOnGrid: log-linear interpolation between points', () => {
+  const grid = buildGrid();
+  const i = Math.floor(grid.length / 2);
+  const vals = grid.map((f, j) => j); // v == index
+  const midF = Math.sqrt(grid[i] * grid[i + 1]); // geometric midpoint
+  const got = valueOnGrid(vals, grid, midF);
+  const want = i + 0.5;
+  if (Math.abs(got - want) > 1e-6) throw new Error(`mid ${got} vs ${want}`);
+});
+
+t('valueOnGrid: clamps outside range, handles empty', () => {
+  const grid = buildGrid();
+  const vals = grid.map(() => 42);
+  eq(valueOnGrid(vals, grid, 5), 42, 1e-9);   // below 20 Hz
+  eq(valueOnGrid(vals, grid, 99999), 42, 1e-9); // above 20 kHz
+  eq(valueOnGrid([], grid, 100), NaN, 1e-9);
 });
 
 console.log(`\n${pass}/${pass + fail}`);
