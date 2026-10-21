@@ -58,6 +58,24 @@ try {
   // 8. CORS on our API (handy for the LAN mobile client)
   const r8 = await fetch(`http://localhost:${PORT}/api/sites`, { headers: { Origin: 'http://192.168.1.50:3020' } });
   ok('api sends access-control-allow-origin', r8.headers.get('access-control-allow-origin') === '*');
+
+  // 9. /api/model aggregate — cached-books mode is primed by step 4's fetch
+  const r9 = await fetch(`http://localhost:${PORT}/api/model?name=Tanchjim%20Kasier&books=cached&data=0`);
+  const m9 = await r9.json();
+  ok('api/model discovers a model across cached books',
+    r9.ok && Array.isArray(m9.matches) && m9.matches.length >= 1 && m9.matches.every(x => x.reviewer && x.file),
+    `returned=${m9?.returned} errs=${JSON.stringify(m9?.errors || []).slice(0, 80)}`);
+
+  // 10. /api/model with curve data — freq/dB pairs per channel
+  const r10 = await fetch(`http://localhost:${PORT}/api/model?name=Moondrop%20Variations&books=cached&limit=3`);
+  const m10 = await r10.json();
+  const withChan = (m10.matches || []).filter(x => x.channels && Object.keys(x.channels).length);
+  const chanOk = withChan.length >= 1 && (() => {
+    const pts = withChan[0].channels[Object.keys(withChan[0].channels)[0]];
+    return Array.isArray(pts) && pts.length > 10 && Array.isArray(pts[0]) && pts[0].length === 2 && Number.isFinite(pts[0][1]);
+  })();
+  ok('api/model returns freq/dB curve data', r10.ok && chanOk,
+    `withChan=${withChan.length} matched=${m10?.matched}`);
 } catch (e) {
   fail++; console.error('SUITE ERROR', e);
 }

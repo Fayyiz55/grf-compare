@@ -34,6 +34,25 @@ On the same Wi-Fi, your phone can open it too: `http://<your-pc-ip>:3020` (find 
 
 Proxied and cached straight from squig.link: site list → catalog → L/R channel files → one normalized grid, fair across rigs.
 
+### HTTP API
+
+Grab the underlying data yourself — everything the app shows is available as JSON:
+
+```bash
+# reviewer/database index — 124 reviewers, their db folders and rigs
+curl http://localhost:3020/api/sites
+
+# raw proxy for any squig-ecosystem URL (whitelisted, disk-cached, CORS *)
+curl "http://localhost:3020/api/fetch?u=$(python3 -m urllib.parse \
+  <<< 'https://hbb.squig.link/data/Moondrop Variations R.txt' \
+  | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read().strip(),safe=""))')"
+
+# aggregate: one model, EVERY reviewer — scans all 149 catalogs
+curl "http://localhost:3020/api/model?name=Moondrop Variations"
+```
+
+`/api/model` returns per match: reviewer, rig, brand/model/display name, the measurement file, and `channels.L`/`channels.R` as `[[freq, dB], …]` pairs. Options: `&data=0` metadata only (instant), `&limit=n` (default 40, max 200), `&types=IEMs,Headphones` filter, `&books=cached` to scan only already-cached catalogs (zero upstream, deterministic). The first full scan warms the disk cache (~30 s); afterwards it's memory-speed.
+
 ## Tests
 
 ```bash
