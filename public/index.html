@@ -3,8 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>GRF Compare — cross-reviewer FR overlay</title>
-  <meta name="description" content="Overlay IEM & headphone frequency response curves from different squig.link reviewers in one graph.">
+  <title>GRF Compare — IEM &amp; Headphone FR Overlay Across Reviewers</title>
+  <meta name="description" content="Overlay IEM, headphone and earbud frequency-response curves from every squig.link reviewer on one chart — compare gear measured on different rigs.">
+
+  <!--canonical + social cards: absolute URLs are stamped in at serve time (server.js reads this marker)-->
+  <!--grf-social-->
 
   <!-- theme before first paint -->
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f0f0e8">
@@ -68,7 +71,7 @@
     };
   </script>
 
-  <link rel="stylesheet" href="./app.css?v=17">
+  <link rel="stylesheet" href="./app.css?v=18">
 </head>
 <body class="bg-canvas text-ink font-inter">
   <noscript><div style="padding:24px;font-weight:700">GRF Compare needs JavaScript to draw graphs.</div></noscript>
@@ -76,10 +79,12 @@
   <!-- HEADER -->
   <header class="hdr">
     <button id="btn-menu" class="btn btn-menu shadow-sw-2" type="button" aria-label="Browse category">☰</button>
-    <a class="brand shadow-sw-2" href="./" title="Reset">
-      <span class="brand-sq">GRF<i class="brand-dot"></i></span>
-      <span class="brand-word">Compare</span>
-    </a>
+    <h1 class="brand shadow-sw-2">
+      <a href="./" title="Reset">
+        <span class="brand-sq">GRF<i class="brand-dot"></i></span>
+        <span class="brand-word">Compare</span>
+      </a>
+    </h1>
     <p class="brand-sub">FR OVERLAY · ACROSS REVIEWERS · SQUIG.LINK DATA</p>
     <div class="hdr-actions">
       <button id="btn-copy" class="btn shadow-sw-2" type="button">COPY URL</button>
@@ -209,6 +214,6 @@
   </main>
 
   <div id="toast" class="toast shadow-sw-4" hidden></div>
-  <script type="module" src="./app.js?v=17"></script>
+  <script type="module" src="./app.js?v=18"></script>
 </body>
 </html>

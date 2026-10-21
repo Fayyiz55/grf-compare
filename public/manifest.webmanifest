@@ -1,7 +1,7 @@
 {
-  "name": "GRF Compare — cross-reviewer FR overlay",
+  "name": "GRF Compare — IEM & Headphone FR Overlay Across Reviewers",
   "short_name": "GRF Compare",
-  "description": "Overlay IEM & headphone frequency response curves from different squig.link reviewers in one graph.",
+  "description": "Overlay IEM, headphone and earbud frequency-response curves from every squig.link reviewer on one chart — compare gear measured on different rigs.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

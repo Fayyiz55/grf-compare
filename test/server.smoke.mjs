@@ -76,6 +76,37 @@ try {
   })();
   ok('api/model returns freq/dB curve data', r10.ok && chanOk,
     `withChan=${withChan.length} matched=${m10?.matched}`);
+
+  // 11. discovery files — absolute URLs derived from the request host
+  const rb = await (await fetch(`http://localhost:${PORT}/robots.txt`)).text();
+  ok('robots.txt: allow-all + sitemap ref',
+    rb.includes('User-agent: *') && rb.includes(`Sitemap: http://localhost:${PORT}/sitemap.xml`) && rb.includes('Disallow: /api/fetch'),
+    rb.slice(0, 120));
+  const sm = await (await fetch(`http://localhost:${PORT}/sitemap.xml`)).text();
+  ok('sitemap.xml lists the app URL', sm.includes('<urlset') && sm.includes(`<loc>http://localhost:${PORT}/</loc>`), sm.slice(0, 120));
+  const ll = await (await fetch(`http://localhost:${PORT}/llms.txt`)).text();
+  ok('llms.txt describes app + API', ll.startsWith('# ') && ll.includes('/api/sites') && ll.includes('/api/model'));
+
+  // 12. canonical + social cards stamped into the served HTML
+  const r12 = await fetch(`http://localhost:${PORT}/`);
+  const p12 = await r12.text();
+  ok('canonical stamped from request host', p12.includes(`<link rel="canonical" href="http://localhost:${PORT}/">`));
+  ok('og:image + twitter:card present', p12.includes('property="og:image"') && p12.includes('name="twitter:card"'));
+  ok('JSON-LD WebSite schema', p12.includes('application/ld+json') && p12.includes('"@type":"WebSite"'));
+  ok('one h1 on the page', (p12.match(/<h1[\s>]/g) || []).length === 1);
+
+  // 13. security headers on every response
+  ok('CSP + nosniff + referrer policy',
+    !!r12.headers.get('content-security-policy') &&
+    r12.headers.get('x-content-type-options') === 'nosniff' &&
+    r12.headers.get('referrer-policy') === 'strict-origin-when-cross-origin');
+  ok('CSP allows the tailwind CDN runtime', (r12.headers.get('content-security-policy') || '').includes('cdn.tailwindcss.com'));
+
+  // 14. method gate: mutating verbs rejected, OPTIONS preflight answered
+  const post = await fetch(`http://localhost:${PORT}/`, { method: 'POST' });
+  ok('POST rejected with 405', post.status === 405);
+  const opt = await fetch(`http://localhost:${PORT}/api/sites`, { method: 'OPTIONS' });
+  ok('OPTIONS preflight 204 + CORS', opt.status === 204 && opt.headers.get('access-control-allow-origin') === '*');
 } catch (e) {
   fail++; console.error('SUITE ERROR', e);
 }

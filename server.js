@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 /* GRF Compare server — zero dependencies. Port 3020.
-   - static files from public/
+   - static files from public/ (index.html gets canonical + og/twitter
+     tags stamped in at serve time — a static copy can't know its URL)
+   - /robots.txt /sitemap.xml /llms.txt → discovery files, absolute URLs
+     derived from the request host (or SITE_ORIGIN when pinned)
    - /api/sites  → squig.link site index (cached)
    - /api/fetch?u=<https url> → cached proxy for squig.link data
      (hosts whitelisted to *.squig.link / squig.link / *.hangout.audio /
@@ -19,6 +22,9 @@ const PORT = process.env.PORT || 3020;
 const PUB = path.join(__dirname, 'public');
 const CACHE = path.join(__dirname, 'cache');
 const SITES_URL = 'https://squig.link/squigsites.json';
+/* pin the public origin (canonical, og:url, sitemap) when behind a proxy or
+   serving a domain the Host header doesn't reflect — e.g. SITE_ORIGIN=https://grf.example.com */
+const SITE_ORIGIN = (process.env.SITE_ORIGIN || '').replace(/\/+$/, '');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -89,6 +95,18 @@ setInterval(sweepCache, 60 * 60 * 1000).unref();
 /* ---------- upstream fetch (redirect-following, timeout) ---------- */
 const MAX_UPSTREAM_BYTES = 24 * 1024 * 1024;
 
+/* bound concurrent upstream connections — a burst of /api/model scans must
+   not open hundreds of sockets against squig.link (or starve this process) */
+const MAX_UPSTREAM_CONN = 16;
+let upActive = 0;
+const upWaiters = [];
+async function withConnSlot(fn) {
+  if (upActive >= MAX_UPSTREAM_CONN) await new Promise(r => upWaiters.push(r));
+  upActive++;
+  try { return await fn(); }
+  finally { upActive--; const wake = upWaiters.shift(); if (wake) wake(); }
+}
+
 function getOnce(url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https:') ? https : http;
@@ -112,7 +130,7 @@ function getOnce(url, timeoutMs) {
 async function upstream(url, { timeout = 15000 } = {}) {
   let target = url;
   for (let hop = 0; hop < 4; hop++) {
-    const r = await getOnce(target, timeout);
+    const r = await withConnSlot(() => getOnce(target, timeout));
     if (r.status >= 300 && r.status < 400 && r.headers.location) {
       const loc = new URL(r.headers.location, target);
       /* every hop must re-pass the same gates as the original request —
@@ -257,12 +275,164 @@ function send(res, status, body, headers = {}) {
   res.end(body);
 }
 
+/* security headers on every response. CSP allows exactly what index.html uses:
+   tailwind CDN runtime, google fonts, inline theme script/styles. No
+   upgrade-insecure-requests — it would rewrite the page's own http fetches
+   on LAN deployments and break /api. */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  'font-src https://fonts.gstatic.com',
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "manifest-src 'self'",
+  "base-uri 'self'",
+  "form-action 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'self'",
+].join('; ');
+const SECURITY_HEADERS = {
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Content-Security-Policy': CSP,
+};
+
+/* HSTS only makes sense over TLS — direct http listeners never set it,
+   a terminating proxy announcing x-forwarded-proto=https does */
+function applySecurityHeaders(req, res) {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  if (req.socket.encrypted || proto === 'https')
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+}
+
+/* ---------- discovery: canonical/social stamping + robots/sitemap/llms ----------
+   The public origin comes from SITE_ORIGIN when pinned, else from the
+   request (forwarding headers first, then Host, then localhost). Values
+   reaching HTML are escaped; Host values are shape-checked so a crafted
+   header can't inject markup. */
+const HOST_SHAPE = /^[a-zA-Z0-9.\-]+(:\d{1,5})?$|^\[[0-9a-fA-F:]+\](:\d{1,5})?$/;
+const escAttr = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function originFromReq(req) {
+  if (SITE_ORIGIN) return SITE_ORIGIN;
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const fwdHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  let host = fwdHost || req.headers.host || '';
+  if (!HOST_SHAPE.test(host)) host = `localhost:${PORT}`;
+  return `${proto === 'https' ? 'https' : 'http'}://${host}`;
+}
+
+const OG_TITLE = 'GRF Compare — IEM & Headphone FR Overlay Across Reviewers';
+const OG_DESC = 'Overlay IEM, headphone and earbud frequency-response curves from every squig.link reviewer on one chart — compare gear measured on different rigs.';
+
+function socialTags(origin) {
+  const o = escAttr(origin);
+  const ld = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: 'GRF Compare',
+    alternateName: OG_TITLE,
+    url: `${origin}/`,
+    description: OG_DESC,
+  });
+  return [
+    `<link rel="canonical" href="${o}/">`,
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="GRF Compare">',
+    `<meta property="og:title" content="${escAttr(OG_TITLE)}">`,
+    `<meta property="og:description" content="${escAttr(OG_DESC)}">`,
+    `<meta property="og:url" content="${o}/">`,
+    `<meta property="og:image" content="${o}/icons/og-image.png">`,
+    '<meta property="og:image:width" content="1200">',
+    '<meta property="og:image:height" content="630">',
+    '<meta property="og:image:alt" content="Three overlaid frequency-response curves on an ivory card — the GRF Compare chart">',
+    '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:title" content="${escAttr(OG_TITLE)}">`,
+    `<meta name="twitter:description" content="${escAttr(OG_DESC)}">`,
+    `<meta name="twitter:image" content="${o}/icons/og-image.png">`,
+    `<script type="application/ld+json">${ld}</script>`,
+  ].join('\n  ');
+}
+
+let _idxSrc = null, _idxStamp = -1;
+function indexPage(origin) {
+  const abs = path.join(PUB, 'index.html');
+  try {
+    const stamp = fs.statSync(abs).mtimeMs;
+    if (_idxSrc === null || stamp !== _idxStamp) {
+      _idxSrc = fs.readFileSync(abs, 'utf8');
+      _idxStamp = stamp;
+    }
+  } catch { return null; }
+  return _idxSrc.replace('<!--grf-social-->', socialTags(origin));
+}
+
+function robotsTxt(origin) {
+  return [
+    'User-agent: *',
+    'Allow: /',
+    '# /api/fetch?u= is an unbounded proxy space - keep it out of crawls',
+    'Disallow: /api/fetch',
+    '',
+    `Sitemap: ${origin}/sitemap.xml`,
+    '',
+  ].join('\n');
+}
+
+function sitemapXml(origin) {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    `  <url><loc>${escAttr(origin)}/</loc></url>`,
+    '</urlset>',
+    '',
+  ].join('\n');
+}
+
+function llmsTxt(origin) {
+  const o = escAttr(origin);
+  return `# GRF Compare
+
+> One-chart comparison of IEM, headphone and earbud frequency-response measurements. Aggregates the published measurement libraries of every public squig.link reviewer onto one searchable, overlayable chart, with normalization for fair cross-rig comparison.
+
+Self-hosted, zero-dependency Node app; the page is a PWA and works offline.
+
+- [Web app](${o}/): searchable library across all enabled reviewer databases, Match Matrix (which reviewers measured each model), squig.link-style SVG chart with smoothing, normalization targets (Harman IE 2019, JM-1 DF, …), ±dB zoom and a crosshair inspector.
+
+## HTTP API (JSON, CORS-open)
+
+- [GET /api/sites](${o}/api/sites): reviewer/database index - every supported squig site with its db folders and measurement rigs.
+- [GET /api/model?name=...](${o}/api/model?name=X): aggregate lookup - scans every reviewer catalog for a model and returns per-match reviewer, rig, brand/model, measurement file and L/R channel curves as [freq, dB] pairs. Options: data=0 (metadata only), limit (default 40, max 200), types=IEMs,Headphones, books=cached (scan only cached catalogs, zero upstream).
+- [GET /api/fetch?u=...](${o}/api/fetch?u=X): cached proxy for whitelisted squig.link / hangout.audio URLs (https only, disk-cached, stale-serving).
+- [GET /healthz](${o}/healthz): liveness.
+
+Measurement data © the respective squig.link reviewers, proxied from their public phone books and measurement .txt files.
+`;
+}
+
 const TTL_SITES = 6 * 60 * 60 * 1000;
 const TTL_BOOK = 6 * 60 * 60 * 1000;
 const TTL_TXT = 7 * 24 * 60 * 60 * 1000;
 
 const server = http.createServer(async (req, res) => {
   try {
+    applySecurityHeaders(req, res);
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Range',
+        'Access-Control-Max-Age': '86400',
+      });
+      return res.end();
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD')
+      return send(res, 405, 'GET/HEAD only', { 'Content-Type': 'text/plain', Allow: 'GET, HEAD, OPTIONS' });
+
     const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const p = u.pathname;
 
@@ -408,6 +578,21 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
 
+    if (p === '/robots.txt') {
+      logApi(req.method, p, 200);
+      return send(res, 200, robotsTxt(originFromReq(req)), { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+    }
+
+    if (p === '/sitemap.xml') {
+      logApi(req.method, p, 200);
+      return send(res, 200, sitemapXml(originFromReq(req)), { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+    }
+
+    if (p === '/llms.txt') {
+      logApi(req.method, p, 200);
+      return send(res, 200, llmsTxt(originFromReq(req)), { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+    }
+
     /* static */
     let rel = decodeURIComponent(p);
     if (rel === '/') rel = '/index.html';
@@ -415,6 +600,13 @@ const server = http.createServer(async (req, res) => {
     /* the separator matters: a plain startsWith(PUB) also admits sibling
        dirs sharing the "public" prefix (e.g. ../public-old/) */
     if (abs !== PUB && !abs.startsWith(PUB + path.sep)) return send(res, 403, 'forbidden', { 'Content-Type': 'text/plain' });
+    /* the served index gets absolute canonical + social-card tags - only the
+       server knows its own public URL; a missing index falls through to 404 */
+    if (abs === path.join(PUB, 'index.html')) {
+      const page = indexPage(originFromReq(req));
+      if (page !== null)
+        return send(res, 200, page, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' });
+    }
     let stat;
     try { stat = fs.statSync(abs); } catch { return send(res, 404, 'not found', { 'Content-Type': 'text/plain' }); }
     if (stat.isDirectory()) { return send(res, 404, 'not found', { 'Content-Type': 'text/plain' }); }

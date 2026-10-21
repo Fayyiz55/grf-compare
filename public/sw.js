@@ -5,7 +5,7 @@
      in waitUntil so the refresh survives SW termination
    - /api/*: network-first, cached fallback (offline demo of last data)
    - cross-origin (fonts, tailwind CDN): stale-while-revalidate */
-const V = 'sq-v17';
+const V = 'sq-v18';
 const SHELL = [
   './',
   './index.html',

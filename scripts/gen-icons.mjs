@@ -121,3 +121,118 @@ for (const [size, name] of [[512, 'icon-512.png'], [192, 'icon-192.png'], [180, 
   fs.writeFileSync(path.join(OUT, name), drawIcon(size));
   console.log('wrote', name, size + 'px');
 }
+
+/* ---- social card (og:image, 1200x630) ----
+   Same brutalist motif as the icons: ivory canvas, ink border, one hero FR
+   curve flanked by two dashed comparison curves (cross-reviewer overlay),
+   with the header brand lockup redrawn as pixel rectangles. No image deps. */
+const OG_W = 1200, OG_H = 630;
+const RED = [0xff, 0x44, 0x38];
+const GREEN = [0x0b, 0xaa, 0x53];
+
+/* 5x7 bitmap glyphs - exactly the letters the two text lines need */
+const GLYPHS = {
+  A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
+  E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+  F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
+  G: ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.'],
+  H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  I: ['.###.', '..#..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+  M: ['#...#', '##.##', '#.#.#', '#...#', '#...#', '#...#', '#...#'],
+  N: ['#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#', '#...#'],
+  O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+  T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+  V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
+  W: ['#...#', '#...#', '#...#', '#.#.#', '#.#.#', '##.##', '#...#'],
+  Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+  '-': ['.....', '.....', '.....', '#####', '.....', '.....', '.....'],
+  ' ': ['.....', '.....', '.....', '.....', '.....', '.....', '.....'],
+};
+
+function drawOg() {
+  const px = Buffer.alloc(OG_W * OG_H * 4);
+  const setPx = (x, y, [r, g, b]) => {
+    x = Math.round(x); y = Math.round(y);
+    if (x < 0 || y < 0 || x >= OG_W || y >= OG_H) return;
+    const o = (y * OG_W + x) * 4;
+    px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255;
+  };
+  const rect = (x, y, w, h, col) => {
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) setPx(x + dx, y + dy, col);
+  };
+  const disc = (cx, cy, rad, col) => {
+    const ri = Math.ceil(rad);
+    for (let dy = -ri; dy <= ri; dy++)
+      for (let dx = -ri; dx <= ri; dx++)
+        if (dx * dx + dy * dy <= rad * rad) setPx(cx + dx, cy + dy, col);
+  };
+
+  /* ivory canvas + ink border */
+  rect(0, 0, OG_W, OG_H, IVORY);
+  const B = 10;
+  rect(0, 0, OG_W, B, INK); rect(0, OG_H - B, OG_W, B, INK);
+  rect(0, 0, B, OG_H, INK); rect(OG_W - B, 0, B, OG_H, INK);
+
+  /* three overlaid curves: hero (solid, outlined) + two dashed comparisons,
+     y offsets read as the same driver measured by different rigs */
+  const x0 = B + 50, x1 = OG_W - B - 50, y0 = 70, y1 = 370;
+  const toPix = pts => pts.map(([fx, fy]) => [x0 + fx * (x1 - x0), y0 + Math.min(1, Math.max(0, fy)) * (y1 - y0)]);
+  const strokeAlong = (pixPts, rad, col, dashed = false) => {
+    for (let i = 0; i < pixPts.length - 1; i++) {
+      const [ax, ay] = pixPts[i], [bx, by] = pixPts[i + 1];
+      const steps = Math.ceil(Math.hypot(bx - ax, by - ay)) * 2;
+      for (let s = 0; s <= steps; s++) {
+        if (dashed && Math.floor(s / 10) % 2) continue;
+        const t = s / steps;
+        disc(ax + (bx - ax) * t, ay + (by - ay) * t, rad, col);
+      }
+    }
+  };
+  const shift = (fyOff) => PTS.map(([fx, fy]) => [fx, Math.min(0.96, Math.max(0.04, fy + fyOff))]);
+  const hero = toPix(PTS);
+  strokeAlong(hero, 15, INK);
+  strokeAlong(hero, 11, BLUE);
+  strokeAlong(toPix(shift(0.16)), 7, RED, true);
+  strokeAlong(toPix(shift(-0.14)), 7, GREEN, true);
+  const [ex, ey] = hero[hero.length - 1];
+  disc(ex, ey, 17, INK); disc(ex, ey, 13, GOLD);
+
+  /* brand lockup: blue chip "GRF" + dot, white chip "COMPARE" (header style) */
+  const TS = 10, CELL = 5 * TS, ADV = 6 * TS, PAD = 16, CHIP_Y = 430, CHIP_H = 7 * TS + 2 * PAD;
+  const textW = (str, s = TS) => str.length * 6 * s - s;
+  const drawText = (str, ox, oy, col, s = TS) => {
+    let cx = ox;
+    for (const ch of str) {
+      const g = GLYPHS[ch] || GLYPHS[' '];
+      for (let r = 0; r < 7; r++)
+        for (let c = 0; c < 5; c++)
+          if (g[r][c] === '#') rect(cx + c * s, oy + r * s, s, s, col);
+      cx += 6 * s;
+    }
+  };
+  const LX = 70;
+  const wa = textW('GRF') + 22 + 2 * PAD;              // room for the gold dot
+  const wb = textW('COMPARE') + 2 * PAD;
+  rect(LX, CHIP_Y, wa, CHIP_H, BLUE);
+  rect(LX, CHIP_Y, wa, 6, INK); rect(LX, CHIP_Y + CHIP_H - 6, wa, 6, INK);
+  rect(LX, CHIP_Y, 6, CHIP_H, INK); rect(LX + wa - 6, CHIP_Y, 6, CHIP_H, INK);
+  drawText('GRF', LX + PAD, CHIP_Y + PAD, [0xff, 0xff, 0xff]);
+  const [gx, gy] = [LX + PAD + textW('GRF') + 11, CHIP_Y + CHIP_H / 2];
+  disc(gx, gy, 10, INK); disc(gx, gy, 7, GOLD);
+  const bx = LX + wa + 14;
+  rect(bx, CHIP_Y, wb, CHIP_H, [0xff, 0xff, 0xff]);
+  rect(bx, CHIP_Y, wb, 6, INK); rect(bx, CHIP_Y + CHIP_H - 6, wb, 6, INK);
+  rect(bx, CHIP_Y, 6, CHIP_H, INK); rect(bx + wb - 6, CHIP_Y, 6, CHIP_H, INK);
+  drawText('COMPARE', bx + PAD, CHIP_Y + PAD, INK);
+
+  /* tagline */
+  drawText('ONE CHART - EVERY REVIEWER', LX, CHIP_Y + CHIP_H + 26, INK, 4);
+
+  return encodePng(OG_W, OG_H, px);
+}
+
+fs.writeFileSync(path.join(OUT, 'og-image.png'), drawOg());
+console.log('wrote og-image.png 1200x630');
