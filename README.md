@@ -6,7 +6,7 @@ No single reviewer owns every measurement rig, so each one publishes different g
 
 ## Run
 
-Only requirement: [Node.js](https://nodejs.org) 18+. No `npm install` — zero dependencies. It really is just:
+Only requirement: [Node.js](https://nodejs.org) 18+ — run **≥ 22.23.4** (the [Oct 2026 security releases](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases) patch high-severity runtime CVEs — Brotli decoder RCE, TLS hostname bypass, dns NUL truncation). No `npm install` — zero dependencies. It really is just:
 
 ```bash
 # 1. get the code
