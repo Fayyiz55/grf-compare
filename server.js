@@ -52,6 +52,23 @@ function cacheWrite(url, obj) {
   try { fs.writeFileSync(cachePath(url), JSON.stringify(obj)); } catch {}
 }
 
+/* ---------- upstream fetch (redirect-following, timeout) ---------- */
+const MAX_UPSTREAM_BYTES = 24 * 1024 * 1024;
+
+/* bound concurrent upstream connections — a burst of /api/model scans must
+   not open hundreds of sockets against squig.link (or starve this process).
+   Declared before refreshWhitelist() runs below: a cold cache makes its first
+   fetch reach withConnSlot synchronously, and a later const would be TDZ-dead. */
+const MAX_UPSTREAM_CONN = 16;
+let upActive = 0;
+const upWaiters = [];
+async function withConnSlot(fn) {
+  if (upActive >= MAX_UPSTREAM_CONN) await new Promise(r => upWaiters.push(r));
+  upActive++;
+  try { return await fn(); }
+  finally { upActive--; const wake = upWaiters.shift(); if (wake) wake(); }
+}
+
 /* ---------- whitelist ---------- */
 let allowedHosts = new Set(['squig.link']);
 
@@ -91,21 +108,6 @@ function sweepCache() {
   } catch {}
 }
 setInterval(sweepCache, 60 * 60 * 1000).unref();
-
-/* ---------- upstream fetch (redirect-following, timeout) ---------- */
-const MAX_UPSTREAM_BYTES = 24 * 1024 * 1024;
-
-/* bound concurrent upstream connections — a burst of /api/model scans must
-   not open hundreds of sockets against squig.link (or starve this process) */
-const MAX_UPSTREAM_CONN = 16;
-let upActive = 0;
-const upWaiters = [];
-async function withConnSlot(fn) {
-  if (upActive >= MAX_UPSTREAM_CONN) await new Promise(r => upWaiters.push(r));
-  upActive++;
-  try { return await fn(); }
-  finally { upActive--; const wake = upWaiters.shift(); if (wake) wake(); }
-}
 
 function getOnce(url, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -316,12 +318,32 @@ function applySecurityHeaders(req, res) {
 const HOST_SHAPE = /^[a-zA-Z0-9.\-]+(:\d{1,5})?$|^\[[0-9a-fA-F:]+\](:\d{1,5})?$/;
 const escAttr = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+/* Reflect only local/private hosts back into stamped URLs — localhost for
+   dev, a LAN IP for the typical direct-serve case. A public hostname arriving
+   via a spoofable Host/forwarded header is host-header injection (canonical
+   poisoning behind a CDN); public domains must pin SITE_ORIGIN instead. */
+function hostIsLocalish(host) {
+  const h = host.replace(/:\d{1,5}$/, ''); // optional port, v4 or bracketed v6
+  if (/^localhost$/i.test(h) || /\.localhost$/i.test(h) || /\.local$/i.test(h)) return true;
+  const m4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m4) {
+    const a = +m4[1], b = +m4[2];
+    if (a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)) return true;
+  }
+  const m6 = /^\[([0-9a-fA-F:]+)\]$/.exec(h);
+  if (m6) {
+    const s = m6[1].toLowerCase();
+    if (s === '::1' || s.startsWith('fe80') || s.startsWith('fd')) return true; // loopback / link-local / ULA
+  }
+  return false;
+}
+
 function originFromReq(req) {
   if (SITE_ORIGIN) return SITE_ORIGIN;
   const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const fwdHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
   let host = fwdHost || req.headers.host || '';
-  if (!HOST_SHAPE.test(host)) host = `localhost:${PORT}`;
+  if (!HOST_SHAPE.test(host) || !hostIsLocalish(host)) host = `localhost:${PORT}`;
   return `${proto === 'https' ? 'https' : 'http'}://${host}`;
 }
 

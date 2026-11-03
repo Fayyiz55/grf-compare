@@ -1,0 +1,23 @@
+[Unit]
+Description=GRF Compare (rootless podman)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=localhost/grf-compare:latest
+ContainerName=grf-compare
+# pasta:-4 = IPv4-only forwarding; otherwise pasta binds ::1 and closes the
+# connection instead of refusing, which breaks curl/browser localhost fallback
+Network=pasta:-4
+PublishPort=3020:3020
+Volume=grf-compare-cache:/app/cache
+# Pin the public origin when behind a TLS proxy / real domain, e.g.:
+# Environment=SITE_ORIGIN=https://grf.example.com
+Exec=node server.js
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

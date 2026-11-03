@@ -1,0 +1,4 @@
+# Keep the image minimal: only the runtime needs shipping.
+*
+!server.js
+!public

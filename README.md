@@ -21,6 +21,36 @@ Then open **http://localhost:3020** in your browser — done.
 
 On the same Wi-Fi, your phone can open it too: `http://<your-pc-ip>:3020` (find the IP with `ipconfig` on Windows or `hostname -I` on Linux). The page is installable as a PWA from your browser menu and works offline. `cache/` holds proxied data and is safe to delete.
 
+## Run with Podman (recommended for always-on deployment)
+
+Runs rootless — no daemon as root, cache persists in a named volume, and a
+systemd user unit (Quadlet) restarts it on failure and at boot.
+
+```bash
+# 1. build the image (only server.js + public/ go in — ~60 MB)
+podman build -t localhost/grf-compare:latest .
+
+# 2. install the systemd user service
+mkdir -p ~/.config/containers/systemd
+cp quadlet/grf-compare.container ~/.config/containers/systemd/
+systemctl --user daemon-reload
+systemctl --user start grf-compare.service   # also starts at boot (needs loginctl enable-linger once)
+
+# 3. verify
+curl http://localhost:3020/healthz           # → ok
+```
+
+Stamped URLs come from the request Host, but only local/private hosts are
+reflected (localhost, LAN IPs). Serving a public domain? Pin it so Host-header
+spoofs can't poison canonical/og/sitemap URLs:
+
+```ini
+# in ~/.config/containers/systemd/grf-compare.container
+Environment=SITE_ORIGIN=https://grf.example.com
+```
+
+then `systemctl --user daemon-reload && systemctl --user restart grf-compare.service`.
+
 ## Features
 
 - Toggle multiple reviewer databases at once (124 squig sites supported)

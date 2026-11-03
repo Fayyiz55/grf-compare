@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import http from 'node:http';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -107,6 +108,21 @@ try {
   ok('POST rejected with 405', post.status === 405);
   const opt = await fetch(`http://localhost:${PORT}/api/sites`, { method: 'OPTIONS' });
   ok('OPTIONS preflight 204 + CORS', opt.status === 204 && opt.headers.get('access-control-allow-origin') === '*');
+
+  // 15. host-header injection: only local/private hosts are reflected into
+  //     stamped URLs; arbitrary public hostnames must fall back to localhost.
+  //     Raw http.request against 127.0.0.1 so the spoofed headers provably arrive.
+  const reqWith = (path, headers) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: PORT, path, headers }, r => {
+      let b = ''; r.on('data', c => b += c); r.on('end', () => resolve(b));
+    }).on('error', reject);
+  });
+  const spoofed = await reqWith('/', { host: 'evil.example.com' });
+  ok('spoofed public Host not reflected into canonical', !spoofed.includes('evil.example.com') && spoofed.includes(`<link rel="canonical" href="http://localhost:${PORT}/">`));
+  const spoofedXfh = await reqWith('/robots.txt', { host: 'localhost', 'x-forwarded-host': 'poison.example.org' });
+  ok('spoofed X-Forwarded-Host not reflected into sitemap URL', !spoofedXfh.includes('poison.example.org') && spoofedXfh.includes(`http://localhost:${PORT}/`));
+  const lan = await reqWith('/robots.txt', { host: `192.168.1.50:${PORT}` });
+  ok('LAN IP Host still reflected (direct-serve case)', lan.includes(`http://192.168.1.50:${PORT}/`));
 } catch (e) {
   fail++; console.error('SUITE ERROR', e);
 }
